@@ -1,0 +1,63 @@
+name: Daily Job Intelligence Scan
+
+on:
+  schedule:
+    - cron: "0 12 * * 1-5"
+    - cron: "0 14 * * 6,0"
+  workflow_dispatch:
+    inputs:
+      score_threshold:
+        description: "Minimum match score (default 7.0)"
+        required: false
+        default: "7.0"
+      dry_run:
+        description: "Dry run"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  APIFY_API_KEY:   ${{ secrets.APIFY_API_KEY }}
+  NOTION_API_KEY:  ${{ secrets.NOTION_API_KEY }}
+  NOTION_DB_ID:    ${{ secrets.NOTION_DB_ID }}
+  SCORE_THRESHOLD: ${{ github.event.inputs.score_threshold || '7.0' }}
+  DRY_RUN:         ${{ github.event.inputs.dry_run || 'false' }}
+
+jobs:
+  scan-and-post:
+    name: Scrape and Post to Notion
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Job Intelligence Agent
+        run: python scripts/job_scraper.py
+
+      - name: Upload run summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: job-scan-${{ github.run_number }}
+          path: run_summary.json
+          retention-days: 30
+
+      - name: Send email digest
+        if: success()
+        env:
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+          SENDGRID_KEY: ${{ secrets.SENDGRID_KEY }}
+          FROM_EMAIL:   ${{ secrets.FROM_EMAIL }}
+        run: python scripts/send_digest.py
+        continue-on-error: true
